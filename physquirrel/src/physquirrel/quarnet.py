@@ -204,6 +204,7 @@ class SplitQuarnet(Quarnet):
         self.split = split
         self.leaves = self.split.elements
         super().__init__(**kwargs)
+        self.split.weight = self.weight
         
         if validate():
             if not self._is_valid():

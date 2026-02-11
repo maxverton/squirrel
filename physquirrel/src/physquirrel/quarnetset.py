@@ -135,6 +135,13 @@ class QuarnetSet:
         it returns True) or only CycleQuarnets (then returns False)."""
         return self.nr_fourcycles() == self.nr_cyclequarnets()
     
+    def weighted_quartetsplits_set(self):
+        splitset = []
+        for quarnet in self.quarnets:
+            if isinstance(quarnet, SplitQuarnet):
+                splitset.append(quarnet.split)
+        return QuartetSplitSet(splitset, elements=self.leaves)
+    
     def quartetsplits(self, threshold = 1.0):
         """Returns a QuartetSplitSet object (on the complete leafset) containing 
         all non-trivial quartet-splits induced by the quarnets in the QuarnetSet that have
@@ -587,7 +594,7 @@ class DenseQuarnetSet(QuarnetSet):
             kwargs are passed to the similarity function
         """
         
-        if method not in ["best", "first"]:
+        if method not in ["best", "first", "return_trees"]:
             raise ValueError("Incorrect method.")
         
 
@@ -628,6 +635,9 @@ class DenseQuarnetSet(QuarnetSet):
             if method == "first" and score_new < scores[-2]:
                 break
 
+        if method == "return_trees":
+            return trees
+        
         if visualize: networks[-1].visualize(title=f"Net {i}")
 
         best_network_index = scores.index(max(scores))

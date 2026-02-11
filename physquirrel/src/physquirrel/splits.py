@@ -10,13 +10,17 @@ class Split(Partition):
     Takes as input two sets of elements that form the split.
         self.elements: set containing elements of both sides
         self.set1, self.set2: sets making up the two sides of the split.
+        self.weight: weight value associated to the split (default 1)
+        self.penalty: penalty value associated to the split (default 0)
     """
     
-    def __init__(self, set1:set, set2:set):
+    def __init__(self, set1:set, set2:set, weight = 1, penalty = 0):
         self.set1 = set1
         self.set2 = set2
         self.elements = self.set1 | self.set2
         self.parts = [frozenset(self.set1), frozenset(self.set2)]
+        self.penalty = penalty
+        self.weight = weight
 
         if validate():
             if not super()._is_valid():
@@ -120,6 +124,20 @@ class SplitSystem(SplitSet):
         if validate():
             if not self._is_valid():
                 raise ValueError("Not a set of full splits.")
+    
+    def add(self, split):
+        """Adds a split to the system. Raises an error if the split is not a full split on self.elements."""
+        if validate():
+            if split.elements != self.elements:
+                raise ValueError("Split does not cover all elements.")
+        self.splits.add(split)
+    
+    def remove(self, split):
+        """Removes a split from the system. Raises an error if the split is not in the system."""
+        if validate():
+            if split not in self.splits:
+                raise ValueError("Split not in system.")
+        self.splits.remove(split)
 
     def __repr__(self):
         return f"SplitSystem({list(self.splits)})"
@@ -154,7 +172,35 @@ class SplitSystem(SplitSet):
         for split in self.splits:
             res = res | split.induced_quartetsplits().splits
         return QuartetSplitSet(res, elements=self.elements)
+    
+    def list_sorted_penalties(self):
+        """Returns a list of the splits sorted by their penalty values (lowest
+        penalty first)."""
+        return sorted(self.splits, key=lambda split: split.penalty)
+    
+    def remove_trivial_splits(self):
+        """Removes all trivial splits from the system."""
+        self.splits = {split for split in self.splits if not split.is_trivial()}
 
+        
+    def build_trees_bstar_greedy(self):
+        """Returns the trees built from the B*-set of the splitsystem. Raises an error if no such tree exists."""
+        self.remove_trivial_splits()
+        split_penalty_list = self.list_sorted_penalties()
+        
+        tree_list = []
+        #Set up all the trivial splits first
+        tree_split_system = SplitSystem([Split({leaf}, self.elements - {leaf}) for leaf in self.elements])
+        for split in split_penalty_list:
+            tree_split_system.add(split)
+            try:
+                tree = tree_split_system.displayed_tree()
+                tree_list.append({'tree' : tree, 'split_system' : tree_split_system})
+            except ValueError:
+                tree_split_system.remove(split)
+        return tree_list
+
+            
 ############################################################
 
 
@@ -254,3 +300,59 @@ class QuartetSplitSet(SplitSet):
                 bstar = new_bstar
 
         return SplitSystem(bstar)
+    
+    def bstar_penalty(self, threshold=3):
+        taxa = list(self.elements)
+        a, b, c, d = taxa[0:4]
+        bstar = [Split({a},{b,c,d}),Split({b},{a,c,d}),Split({c},{a,b,d}),Split({d},{a,b,c})]
+        abcd_splits = [Split({a,b},{c,d}), Split({a,c},{b,d}), Split({a,d},{b,c})]
+        abcd_split = self.obtain_split({a,b,c,d})
+
+        if abcd_split in abcd_splits:
+            for split in abcd_splits:
+                if split != abcd_split:
+                    split.penalty = abcd_split.weight
+
+        bstar.extend(abcd_splits)
+        for i, element in enumerate(taxa):
+            if i < 4: continue
+            new_bstar = [Split({element},set(taxa[0:i]))]
+
+            
+            for split in bstar:
+                candidate_split1 = Split(split.set1 | {element}, split.set2, penalty = split.penalty)
+                candidate_split2 = Split(split.set1, split.set2 | {element}, penalty = split.penalty)
+
+                ### For the split where the new element is added to set1 we compute the penalty for the
+                # newly induced quartet trees by the split containing the new element.  
+                for x in split.set1:
+                    for y, z in itertools.combinations(split.set2, 2):
+                        q_split = self.obtain_split({element, x, y, z})
+                        if q_split is None: continue
+
+                        if q_split != Split({x, element}, {y, z}):
+                            candidate_split1.penalty += q_split.weight
+
+                for x, y in itertools.combinations(split.set1, 2):
+                    for z in split.set2:
+                        q_split = self.obtain_split({element, x, y, z})
+                        if q_split is None: continue
+
+                        if q_split != Split({x, y}, {z, element}):
+                            candidate_split2.penalty += q_split.weight
+
+                if candidate_split1.penalty < threshold:
+                    new_bstar.append(candidate_split1)
+                if candidate_split2.penalty < threshold:
+                    new_bstar.append(candidate_split2)
+                
+                bstar = new_bstar
+
+        return SplitSystem(bstar)
+
+    def get_blobtrees_tstar_penalty(self, threshold=3):
+        bstar_splitsystem = self.bstar_penalty(threshold=threshold)
+        for split in bstar_splitsystem.splits:
+            print(f"Split: {split}, Penalty: {split.penalty}")
+        tstar_list = bstar_splitsystem.build_trees_bstar_greedy()
+        return tstar_list
