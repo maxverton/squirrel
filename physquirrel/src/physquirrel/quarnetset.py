@@ -380,7 +380,7 @@ class DenseQuarnetSet(QuarnetSet):
         else:
             r1 = len(own_quarnets.quarnets & other_quarnets.quarnets)
             r2 = len(own_quarnets.quarnets)
-            
+        if r2 == 0: return 0
         return r1 / r2
     
     def consistency_prime(self, quarnetset, reference, triangles=False, reticulations=True, weighted=True):
