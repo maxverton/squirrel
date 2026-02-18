@@ -84,9 +84,11 @@ class SplitSet:
         self.elements = set()
         for split in self.splits:
             self.elements.update(split.elements)
-    
+            
     def __repr__(self):
-        return f"SplitSet({list(self.splits)})"
+        # Join items with a newline and a bit of indentation for readability
+        items = "\n  ".join(map(repr, self.splits))
+        return f"SplitSet([\n  {items}\n])"
     
     def __iter__(self):
         return iter(self.splits)
@@ -96,6 +98,11 @@ class SplitSet:
     
     def __len__(self):
         return len(self.splits)  
+    
+    def print_penalties(self):
+        """Prints the splits in the set along with their penalty values."""
+        for split in self.splits:
+            print(f"Split: {split}, Penalty: {split.penalty}")
 
 ############################################################
 
@@ -116,6 +123,7 @@ class SplitSystem(SplitSet):
     
     def __init__(self, splits):
         self.splits = set(splits)
+        self.sorted_splits = sorted(self.splits, key=lambda split: split.penalty)
         if len(self.splits) == 0:
             self.elements = set()
         else:
@@ -140,13 +148,19 @@ class SplitSystem(SplitSet):
         self.splits.remove(split)
 
     def __repr__(self):
-        return f"SplitSystem({list(self.splits)})"
+        items = "\n  ".join(map(repr, self.splits))
+        return f"SplitSystem([\n  {items}\n])"
 
     def _is_valid(self):
         for split in self.splits:
             if split.elements != self.elements:
                 return False
         return True
+    
+    def print_sorted_by_penalty(self):
+        """Prints the splits in the system sorted by their penalty values (lowest penalty first)."""
+        for split in self.list_sorted_penalties():
+            print(f"{split}, Penalty: {split.penalty}")
     
     def displayed_tree(self):
         """Returns the tree that displays the splitsystem. Raises an error if
@@ -176,11 +190,13 @@ class SplitSystem(SplitSet):
     def list_sorted_penalties(self):
         """Returns a list of the splits sorted by their penalty values (lowest
         penalty first)."""
-        return sorted(self.splits, key=lambda split: split.penalty)
-    
+        self.sorted_splits = sorted(self.splits, key=lambda split: split.penalty)
+        return self.sorted_splits
+
     def remove_trivial_splits(self):
         """Removes all trivial splits from the system."""
         self.splits = {split for split in self.splits if not split.is_trivial()}
+        self.sorted_splits = [split for split in self.sorted_splits if not split.is_trivial()]
 
         
     def build_trees_bstar_greedy(self):
