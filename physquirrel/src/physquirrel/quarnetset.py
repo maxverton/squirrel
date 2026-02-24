@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from .utils import CircularOrdering, id_generator, validate
 
 from .quarnet import SingleTriangle, DoubleTriangle, QuartetTree, SplitQuarnet, FourCycle, CycleQuarnet, Quarnet
-from .splits import Split, QuartetSplitSet
+from .splits import Split, QuartetSplitSet, SplitSystem
 
 ############################################################
 
@@ -462,7 +462,69 @@ class DenseQuarnetSet(QuarnetSet):
             return len(own_quarnets.quarnets ^ other_quarnets.quarnets) / len(own_quarnets.quarnets | other_quarnets.quarnets)
         else:
             return len(own_quarnets.quarnets ^ other_quarnets.quarnets)
+    
+    def bstar_penalty(self, threshold=3):
+        taxa = list(self.leaves)
+        a, b, c, d = taxa[0:4]
+        bstar = [Split({a},{b,c,d}),Split({b},{a,c,d}),Split({c},{a,b,d}),Split({d},{a,b,c})]
+        abcd_splits = [Split({a,b},{c,d}), Split({a,c},{b,d}), Split({a,d},{b,c})]
+        q_abcd = self.quarnet({a,b,c,d})
+        
+        if isinstance(q_abcd, SplitQuarnet):
+            for split in abcd_splits:
+                if split != q_abcd.split:
+                    split.penalty = q_abcd.weight
+        else:
+            for split in abcd_splits:
+                split.penalty = q_abcd.weight
 
+        bstar.extend(abcd_splits)
+        for i, element in enumerate(taxa):
+            if i < 4: continue
+            new_bstar = [Split({element},set(taxa[0:i]))]
+
+            
+            for split in bstar:
+                candidate_split1 = Split(split.set1 | {element}, split.set2, penalty = split.penalty)
+                candidate_split2 = Split(split.set1, split.set2 | {element}, penalty = split.penalty)
+
+                ### For the split where the new element is added to set1 we compute the penalty for the
+                # newly induced quartet trees by the split containing the new element.  
+                for x in split.set1:
+                    for y, z in itertools.combinations(split.set2, 2):
+                        q = self.quarnet({element, x, y, z})
+            
+                        # Clearly defined conditions
+                        is_bad_cycle = isinstance(q, FourCycle)
+                        is_mismatched_split = (isinstance(q, SplitQuarnet) and 
+                                            q.split != Split({x, element}, {y, z}))
+
+                        # Give penalty if condition if one condition is met
+                        if is_bad_cycle or is_mismatched_split:
+                            candidate_split1.penalty += q.weight
+
+
+                for x, y in itertools.combinations(split.set1, 2):
+                    for z in split.set2:
+                        q = self.quarnet({element, x, y, z})
+
+                        is_bad_cycle = isinstance(q, FourCycle)
+                        is_mismatched_split = (isinstance(q, SplitQuarnet) and
+                                            q.split != Split({x, y}, {z, element}))
+                        
+
+                        if is_bad_cycle or is_mismatched_split:
+                            candidate_split2.penalty += q.weight
+
+                if candidate_split1.penalty < threshold:
+                    new_bstar.append(candidate_split1)
+                if candidate_split2.penalty < threshold:
+                    new_bstar.append(candidate_split2)
+                
+                bstar = new_bstar
+
+        return SplitSystem(bstar)
+    
     def quartet_joining(self, threshold=0.0, starting_tree=None):
         """Returns the tree from the quartet-joining algorithm for the quarnet-splits. 
         The threshold can be used for early stopping. In particular, if the highest

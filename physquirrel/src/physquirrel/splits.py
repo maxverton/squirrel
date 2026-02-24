@@ -215,6 +215,11 @@ class SplitSystem(SplitSet):
             except ValueError:
                 tree_split_system.remove(split)
         return tree_list
+    
+    def search_tree_bstar_treebuilder(self):
+        self.remove_trivial_splits()
+        split_penalty_list = self.list_sorted_penalties()
+        
 
             
 ############################################################
