@@ -14,13 +14,14 @@ class Split(Partition):
         self.penalty: penalty value associated to the split (default 0)
     """
     
-    def __init__(self, set1:set, set2:set, weight = 1, penalty = 0):
+    def __init__(self, set1:set, set2:set, weight = 1, penalty = 0, induced_weight = 0):
         self.set1 = set1
         self.set2 = set2
         self.elements = self.set1 | self.set2
         self.parts = [frozenset(self.set1), frozenset(self.set2)]
         self.penalty = penalty
         self.weight = weight
+        self.induced_weight = induced_weight
 
         if validate():
             if not super()._is_valid():
