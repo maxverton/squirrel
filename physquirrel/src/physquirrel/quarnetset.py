@@ -1,6 +1,7 @@
 import networkx as nx
 import itertools, random, math, time, os
 import numpy as np
+import pandas as pd
 from functools import lru_cache
 #from python_tsp.exact import solve_tsp_dynamic_programming
 from typing import Dict, List, Optional, Tuple
@@ -525,71 +526,130 @@ class DenseQuarnetSet(QuarnetSet):
 
         return SplitSystem(bstar)
     
-    def bstar_penalty2(self, scale = 1):
-        taxa = list(self.leaves)
-        a, b, c, d = taxa[0:4]
-        bstar = [Split({a},{b,c,d}),Split({b},{a,c,d}),Split({c},{a,b,d}),Split({d},{a,b,c})]
-        abcd_splits = [Split({a,b},{c,d}), Split({a,c},{b,d}), Split({a,d},{b,c})]
-        q_abcd = self.quarnet({a,b,c,d})
+    def compute_pair_support_matrix(self):
+        leaves = list(self.leaves)
+        S = pd.DataFrame(0.0, index=leaves, columns=leaves)
+        for q in self.quarnets:
+            if isinstance(q, SplitQuarnet):
+                a, b = q.split.set1; c, d = q.split.set2
+                S.at[a, b] += q.weight
+                S.at[b, a] += q.weight
+                S.at[c, d] += q.weight
+                S.at[d, c] += q.weight
+        self.S = S
+        return S
+                
+    def top_K_pairs(self, K):
+        try:
+            stacked = self.S.stack()
+        except AttributeError:
+            print("Pair support matrix not computed.")
+            return None
+
+        # Remove diagonal entries
+        stacked = stacked[stacked.index.get_level_values(0) != 
+                        stacked.index.get_level_values(1)]
         
-        for split in abcd_splits:
-            split.induced_weight += q_abcd.weight
+        # Keep only one triangle (avoid duplicates)
+        stacked = stacked[
+            stacked.index.get_level_values(0) <
+            stacked.index.get_level_values(1)
+        ]
+    
+        # Sort descending
+        top_pairs = stacked.sort_values(ascending=False).head(K)
+        result = [(value, {i,j}) for (i, j), value in top_pairs.items()]
+        return result
+    
+    def split_from_pair(self, pair):
+        set1 = pair
+        set2 = self.leaves - pair
+
+        for leaf in list(set2):
+            set1_support = sum(self.S.at[leaf, k] for k in set1)
+            set2_support = sum(self.S.at[leaf, k] for k in set2 if k != leaf)
+
+            if set1_support > set2_support:
+                set1.add(leaf)
+                set2.remove(leaf)
+        if len(set1) < 2 or len(set2) < 2:
+            return None
         
-        if isinstance(q_abcd, SplitQuarnet):
-            for split in abcd_splits:
-                if split != q_abcd.split:
-                    split.penalty = q_abcd.weight
-        else:
-            for split in abcd_splits:
-                split.penalty = q_abcd.weight
+        return Split(set1, set2)
 
-        bstar.extend(abcd_splits)
-        for i, element in enumerate(taxa):
-            if i < 4: continue
-            new_bstar = [Split({element},set(taxa[0:i]))]
+    def hill_climbing_single_split(self, start_split, forbidden_splits = set()):
 
-            
-            for split in bstar:
-                candidate_split1 = Split(split.set1 | {element}, split.set2, penalty = split.penalty)
-                candidate_split2 = Split(split.set1, split.set2 | {element}, penalty = split.penalty)
+        #Compute the total induced weight, total correct weight and score by dividing these two
+        start_split.get_splitscore(self)
+        improved = True
+        best_split = start_split
+        split = start_split
 
-                ### For the split where the new element is added to set1 we compute the penalty for the
-                # newly induced quartet trees by the split containing the new element.  
-                for x in split.set1:
+        while improved:
+            improved = False
+            #print("Current best split: " + str(best_split) + " with score " + str(best_split.split_score))
+            for element in split.set1:
+                candidate_split = Split(split.set1 - {element}, split.set2 | {element},
+                                        total_induced_weight=split.total_induced_weight, 
+                                        correct_splits_weight=split.correct_splits_weight)
+                if candidate_split in forbidden_splits:
+                    continue
+                for x in split.set1 - {element}:
                     for y, z in itertools.combinations(split.set2, 2):
                         q = self.quarnet({element, x, y, z})
-            
-                        # Clearly defined conditions
-                        is_bad_cycle = isinstance(q, FourCycle)
-                        is_mismatched_split = (isinstance(q, SplitQuarnet) and 
-                                            q.split != Split({x, element}, {y, z}))
-
-                        # Give penalty if condition if one condition is met
-                        if is_bad_cycle or is_mismatched_split:
-                            candidate_split1.penalty += q.weight
-
-
-                for x, y in itertools.combinations(split.set1, 2):
+                        candidate_split.total_induced_weight -= q.weight
+                        if isinstance(q, SplitQuarnet) and q.split == Split({x, element}, {y, z}):
+                            candidate_split.correct_splits_weight -= q.weight
+                
+                for x, y in itertools.combinations(split.set1 - {element}, 2):
                     for z in split.set2:
                         q = self.quarnet({element, x, y, z})
+                        candidate_split.total_induced_weight += q.weight
+                        if isinstance(q, SplitQuarnet) and q.split == Split({x, y}, {z, element}):
+                            candidate_split.correct_splits_weight += q.weight
 
-                        is_bad_cycle = isinstance(q, FourCycle)
-                        is_mismatched_split = (isinstance(q, SplitQuarnet) and
-                                            q.split != Split({x, y}, {z, element}))
-                        
+                candidate_split.get_splitscore()
+                if candidate_split.split_score > best_split.split_score:
+                    best_split = candidate_split
+                    improved = True
+        
+            for element in split.set2:
+                candidate_split = Split(split.set1 | {element}, split.set2 - {element},
+                                        total_induced_weight=split.total_induced_weight, 
+                                        correct_splits_weight=split.correct_splits_weight)
+                if candidate_split in forbidden_splits:
+                    continue
+                for x, y in itertools.combinations(split.set1, 2):
+                    for z in split.set2 - {element}:
+                        q = self.quarnet({element, x, y, z})
+                        candidate_split.total_induced_weight -= q.weight
+                        if isinstance(q, SplitQuarnet) and q.split == Split({x, y}, {z, element}):
+                            candidate_split.correct_splits_weight -= q.weight
 
-                        if is_bad_cycle or is_mismatched_split:
-                            candidate_split2.penalty += q.weight
+                for x in split.set1:
+                    for y, z in itertools.combinations(split.set2 - {element}, 2):
+                        q = self.quarnet({element, x, y, z})
+                        candidate_split.total_induced_weight += q.weight
+                        if isinstance(q, SplitQuarnet) and q.split == Split({x, element}, {y, z}):
+                            candidate_split.correct_splits_weight += q.weight
 
-                if candidate_split1.penalty < threshold:
-                    new_bstar.append(candidate_split1)
-                if candidate_split2.penalty < threshold:
-                    new_bstar.append(candidate_split2)
-                
-                bstar = new_bstar
+                candidate_split.get_splitscore()
+                if candidate_split.split_score > best_split.split_score:
+                    best_split = candidate_split
+                    improved = True
+            
+            split = best_split
+        
+        return best_split
 
-        return SplitSystem(bstar)
-    
+    def bstar_hill_climbing(self, alpha = 1):
+        n = len(self.leaves)
+        top_splits = set()
+        for _ in range(int(alpha * n)):
+            split = self.hill_climbing_single_split(forbidden_splits=top_splits)
+            top_splits.add(split)
+        return SplitSystem(top_splits)
+
     def quartet_joining(self, threshold=0.0, starting_tree=None):
         """Returns the tree from the quartet-joining algorithm for the quarnet-splits. 
         The threshold can be used for early stopping. In particular, if the highest

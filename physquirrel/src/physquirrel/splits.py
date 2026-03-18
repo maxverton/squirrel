@@ -1,7 +1,6 @@
 import itertools
 
 from .utils import Partition, validate, id_generator
-
 ############################################################
 
 class Split(Partition):
@@ -14,14 +13,16 @@ class Split(Partition):
         self.penalty: penalty value associated to the split (default 0)
     """
     
-    def __init__(self, set1:set, set2:set, weight = 1, penalty = 0, induced_weight = 0):
+    def __init__(self, set1:set, set2:set, weight = 1, penalty = 0, total_induced_weight = 0, correct_splits_weight = 0):
         self.set1 = set1
         self.set2 = set2
         self.elements = self.set1 | self.set2
         self.parts = [frozenset(self.set1), frozenset(self.set2)]
         self.penalty = penalty
         self.weight = weight
-        self.induced_weight = induced_weight
+        self.total_induced_weight = total_induced_weight
+        self.correct_splits_weight = correct_splits_weight
+        self.split_score = self.correct_splits_weight / self.total_induced_weight if self.total_induced_weight > 0 else 0
 
         if validate():
             if not super()._is_valid():
@@ -63,6 +64,34 @@ class Split(Partition):
                     res.append(split)
                     
         return QuartetSplitSet(set(res))
+    
+
+    def get_splitscore(self, Q = None):
+        """Returns the splitscore of the split with respect to a given DenseQuartetSplitSet Q."""
+
+        if Q is None:
+            self.split_score = self.correct_splits_weight / self.total_induced_weight if self.total_induced_weight > 0 else 0
+            return self.split_score
+
+        from .quarnet import SplitQuarnet
+        if self.elements != Q.leaves:
+            raise ValueError("Split and QuartetSplitSet must be on the same set of elements.")
+        
+        induced_weight = 0
+        correct_weight = 0
+
+        for x1, x2 in itertools.combinations(self.set1, 2):
+            for y1, y2 in itertools.combinations(self.set2, 2):
+                q = Q.quarnet({x1, x2, y1, y2})
+                induced_weight += q.weight
+                if isinstance(q, SplitQuarnet) and q.split == Split({x1, x2}, {y1, y2}):
+                    correct_weight += q.weight
+        
+        sigma = correct_weight / induced_weight if induced_weight > 0 else 0
+        self.total_induced_weight = induced_weight
+        self.correct_splits_weight = correct_weight
+        self.split_score = sigma
+        return sigma
 
 ############################################################
 
@@ -122,9 +151,10 @@ class SplitSystem(SplitSet):
         self.elements: set containing all elements appearing in the splits
     """
     
-    def __init__(self, splits):
+    def __init__(self, splits, score = 0):
         self.splits = set(splits)
         self.sorted_splits = sorted(self.splits, key=lambda split: split.penalty)
+        self.score = score
         if len(self.splits) == 0:
             self.elements = set()
         else:
@@ -220,6 +250,32 @@ class SplitSystem(SplitSet):
     def search_tree_bstar_treebuilder(self):
         self.remove_trivial_splits()
         split_penalty_list = self.list_sorted_penalties()
+
+    def build_trees_bstar_tree_search(self, alpha = 1):
+        sorted_splits = sorted(self.splits, key=lambda split: split.split_score, reverse=True)
+        for split in sorted_splits:
+            split.split_score = split.split_score * 4 - 3
+        tree_list = []
+        tree_split_systems = [SplitSystem([Split({leaf}, self.elements - {leaf}) for leaf in self.elements])]
+        number_of_trees = int(alpha * len(self.elements))
+        for split in sorted_splits:
+            for tree_split_system in tree_split_systems:
+                extended_split_system = SplitSystem(tree_split_system.splits | {split})
+                try:
+                    tree = extended_split_system.displayed_tree()
+                    extended_split_system.score = tree_split_system.score + split.split_score
+                    if len(tree_list) < number_of_trees:
+                        tree_list.append({'tree' : tree, 'split_system' : extended_split_system, 'score' : extended_split_system.score})
+                        tree_split_systems.append(extended_split_system)
+                    elif extended_split_system.score > min(tree_list, key=lambda x: x['score'])['score']:
+                        tree_list.remove(min(tree_list, key=lambda x: x['score']))
+                        tree_split_systems.remove(min(tree_list, key=lambda x: x['score'])['split_system'])
+                        tree_list.append({'tree' : tree, 'split_system' : extended_split_system, 'score' : extended_split_system.score})
+                        tree_split_systems.append(extended_split_system)
+                except ValueError:
+                    pass
+
+        return tree_list
         
 
             
